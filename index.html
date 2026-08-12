@@ -226,20 +226,34 @@
   .track-title{ font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 18px; margin: 0 0 4px; max-width: 420px; }
   .track-sub{ font-size: 13px; color: var(--text-muted); margin: 0 0 18px; }
 
-  .progress-row{ width: 100%; max-width: 420px; margin-bottom: 6px; }
-  .progress-track{ width: 100%; height: 4px; border-radius: 999px; background: var(--border); cursor: pointer; position: relative; overflow: hidden; }
-  .progress-fill{ height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); width: 0%; position: relative; }
-  .progress-fill::after{
-    content:'';
-    position:absolute; top:0; right:0; bottom:0; width: 10px;
-    background: rgba(255,255,255,0.5);
-    filter: blur(3px);
-    display: none;
+  /* ---------- seek bar (tap AND drag, mouse + touch) ---------- */
+  .progress-row{ width: 100%; max-width: 420px; margin-bottom: 2px; }
+  .progress-track{
+    position: relative;
+    width: 100%;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    touch-action: none; /* let us handle horizontal drag ourselves */
   }
-  .progress-track.is-active .progress-fill::after{ display: block; }
-  .time-row{ display:flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); width: 100%; max-width: 420px; margin-top: 6px; letter-spacing: .03em; font-variant-numeric: tabular-nums; }
+  .progress-line{ width: 100%; height: 4px; border-radius: 999px; background: var(--border); overflow: hidden; }
+  .progress-fill{ height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); width: 0%; }
+  .progress-thumb{
+    position: absolute;
+    top: 50%; left: 0%;
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(232,163,61,0.18);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    transition: box-shadow .15s ease;
+  }
+  .progress-track.is-scrubbing .progress-thumb{ box-shadow: 0 0 0 7px rgba(232,163,61,0.28); }
+  .time-row{ display:flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); width: 100%; max-width: 420px; margin-top: 4px; letter-spacing: .03em; font-variant-numeric: tabular-nums; }
 
-  .controls{ display:flex; align-items:center; justify-content:center; gap: 22px; padding: 20px 0 4px; }
+  .controls{ display:flex; align-items:center; justify-content:center; gap: 22px; padding: 18px 0 4px; }
   .ctrl-btn{
     background: var(--bg); border: 1px solid var(--border); color: var(--text);
     width: 46px; height: 46px; border-radius: 50%;
@@ -364,7 +378,10 @@
 
       <div class="progress-row">
         <div class="progress-track" id="progress-track">
-          <div class="progress-fill" id="progress-fill"></div>
+          <div class="progress-line">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="progress-thumb" id="progress-thumb"></div>
         </div>
       </div>
       <div class="time-row">
@@ -420,7 +437,7 @@
     {
       title: "Bus Driver Ki Playlist",
       url: "https://music.youtube.com/playlist?list=PLeatb7hupNV_AWUl_7ttbsKeCQh8tF5N4",
-      description: "Purane Gane"
+      description: "Old-school Hindi classics for the long haul — the kind of songs made for highway drives and late-night trips."
     }
   ];
 
@@ -443,6 +460,7 @@
   const trackSub = document.getElementById('track-sub');
   const progressTrack = document.getElementById('progress-track');
   const progressFill = document.getElementById('progress-fill');
+  const progressThumb = document.getElementById('progress-thumb');
   const timeCurrent = document.getElementById('time-current');
   const timeDuration = document.getElementById('time-duration');
 
@@ -467,6 +485,7 @@
   let songsLoadedFor = null;
   let currentPlaylistName = '';
   let progressTimer = null;
+  let isScrubbing = false;
 
   // duration-probe player (separate hidden player used only to read durations)
   let probePlayer = null;
@@ -560,7 +579,6 @@
     audioCard.classList.toggle('is-playing', isPlaying);
     coverWrap.classList.toggle('is-spinning', isPlaying);
     eq.classList.toggle('playing', isPlaying);
-    progressTrack.classList.toggle('is-active', isPlaying);
     playPauseBtn.classList.toggle('is-playing', isPlaying);
     playIcon.style.display = isPlaying ? 'none' : 'block';
     pauseIcon.style.display = isPlaying ? 'block' : 'none';
@@ -612,7 +630,7 @@
     trackTitle.textContent = 'Loading…';
     trackSub.textContent = currentPlaylistName;
     cover.style.backgroundImage = '';
-    progressFill.style.width = '0%';
+    setProgressVisual(0);
     timeCurrent.textContent = '0:00';
     timeDuration.textContent = '0:00';
 
@@ -669,14 +687,21 @@
     }
   }
 
+  // ---- progress + seeking ----
+  function setProgressVisual(ratio) {
+    ratio = Math.min(1, Math.max(0, ratio));
+    progressFill.style.width = `${ratio * 100}%`;
+    progressThumb.style.left = `${ratio * 100}%`;
+  }
+
   function startProgressTimer() {
     stopProgressTimer();
     progressTimer = setInterval(() => {
-      if (!ytPlayer) return;
+      if (!ytPlayer || isScrubbing) return;
       let cur, dur;
       try { cur = ytPlayer.getCurrentTime(); dur = ytPlayer.getDuration(); } catch (e) { return; }
       if (!dur) return;
-      progressFill.style.width = `${(cur / dur) * 100}%`;
+      setProgressVisual(cur / dur);
       timeCurrent.textContent = formatTime(cur);
       timeDuration.textContent = formatTime(dur);
     }, 500);
@@ -685,14 +710,47 @@
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
   }
 
-  progressTrack.addEventListener('click', (e) => {
+  function ratioFromPointer(e) {
+    const rect = progressTrack.getBoundingClientRect();
+    const x = Math.min(rect.right, Math.max(rect.left, e.clientX));
+    return (x - rect.left) / rect.width;
+  }
+
+  progressTrack.addEventListener('pointerdown', (e) => {
     if (!ytPlayer) return;
+    isScrubbing = true;
+    progressTrack.classList.add('is-scrubbing');
+    progressTrack.setPointerCapture(e.pointerId);
+    const ratio = ratioFromPointer(e);
+    setProgressVisual(ratio);
+    let dur;
+    try { dur = ytPlayer.getDuration(); } catch (err) { dur = 0; }
+    if (dur) timeCurrent.textContent = formatTime(dur * ratio);
+  });
+
+  progressTrack.addEventListener('pointermove', (e) => {
+    if (!isScrubbing) return;
+    const ratio = ratioFromPointer(e);
+    setProgressVisual(ratio);
+    let dur;
+    try { dur = ytPlayer.getDuration(); } catch (err) { dur = 0; }
+    if (dur) timeCurrent.textContent = formatTime(dur * ratio);
+  });
+
+  function endScrub(e) {
+    if (!isScrubbing) return;
+    isScrubbing = false;
+    progressTrack.classList.remove('is-scrubbing');
+    if (!ytPlayer) return;
+    const ratio = ratioFromPointer(e);
     let dur;
     try { dur = ytPlayer.getDuration(); } catch (err) { return; }
-    if (!dur) return;
-    const rect = progressTrack.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    ytPlayer.seekTo(dur * ratio, true);
+    if (dur) ytPlayer.seekTo(dur * ratio, true);
+  }
+  progressTrack.addEventListener('pointerup', endScrub);
+  progressTrack.addEventListener('pointercancel', () => {
+    isScrubbing = false;
+    progressTrack.classList.remove('is-scrubbing');
   });
 
   playPauseBtn.addEventListener('click', () => {
@@ -709,6 +767,10 @@
     navigator.mediaSession.setActionHandler('pause', () => ytPlayer && ytPlayer.pauseVideo());
     navigator.mediaSession.setActionHandler('previoustrack', () => ytPlayer && ytPlayer.previousVideo());
     navigator.mediaSession.setActionHandler('nexttrack', () => ytPlayer && ytPlayer.nextVideo());
+    navigator.mediaSession.setActionHandler('seekto', (details) => {
+      if (!ytPlayer || details.seekTime == null) return;
+      ytPlayer.seekTo(details.seekTime, true);
+    });
   }
 
   function highlightActiveSong() {
